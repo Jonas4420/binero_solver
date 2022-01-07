@@ -11,7 +11,7 @@ pub struct Grid {
     height: usize,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Cell {
     Zero,
     One,
@@ -59,19 +59,36 @@ impl Grid {
         let height = cells.len();
         let width = cells[0].len();
 
-        Ok(Grid { cells, height, width })
+        if ((height % 2) != 0) || ((width % 2) != 0) {
+            return Err(GridError::OddDimension(height, width));
+        }
+
+        let grid = Grid { cells, height, width };
+
+        grid.is_valid()?;
+
+        Ok(grid)
     }
 
     pub fn solve(&mut self) -> Result<(), GridError> {
-        // TODO
+        let mut fixed_point = false;
 
-        self.is_valid()?;
+        while !fixed_point {
+            fixed_point = self.fill_constraints();
+            println!();
+            println!("{}", self);
+        }
+
+        if let Err(err) = self.is_valid() {
+            return Err(err);
+        }
 
         if self.is_filled() {
-            Ok(())
-        } else {
-            unimplemented!()
+            return Ok(());
         }
+
+        // TODO
+        Ok(())
     }
 
     fn is_filled(&self) -> bool {
@@ -80,29 +97,37 @@ impl Grid {
 
     fn is_valid(&self) -> Result<(), GridError> {
         // No more than 2 consecutive values in a line
-        (0..self.height)
-            .try_for_each(|i| self.check_cells((0..self.width - 2).map(|j| ((i, j), (i, j + 1), (i, j + 2)))))?;
-
-        // No more than 2 consecutive values in a column
-        (0..self.width)
-            .try_for_each(|j| self.check_cells((0..self.height - 2).map(|i| ((i, j), (i + 1, j), (i + 2, j)))))?;
-
-        // Check that full lines are balanced
-        (0..self.height).try_for_each(|i| self.check_balance((0..self.width).map(|j| (i, j))))?;
-
-        // Check that full columns are balanced
-        (0..self.width).try_for_each(|j| self.check_balance((0..self.height).map(|i| (i, j))))?;
-
-        // For each line pair
-        for i0 in 0..self.height - 1 {
-            // Lines are filled and different
-            (i0 + 1..self.height).try_for_each(|i1| self.check_lanes((0..self.width).map(|j| ((i0, j), (i1, j)))))?;
+        for i in 0..self.height {
+            self.check_cells((0..self.width - 2).map(|j| ((i, j), (i, j + 1), (i, j + 2))))?;
         }
 
-        // For each column pair
+        // No more than 2 consecutive values in a column
+        for j in 0..self.width {
+            self.check_cells((0..self.height - 2).map(|i| ((i, j), (i + 1, j), (i + 2, j))))?;
+        }
+
+        // Check that full lines are balanced
+        for i in 0..self.height {
+            self.check_balance((0..self.width).map(|j| (i, j)))?;
+        }
+
+        // Check that full columns are balanced
+        for j in 0..self.width {
+            self.check_balance((0..self.height).map(|i| (i, j)))?;
+        }
+
+        // Each line pairs are different
+        for i0 in 0..self.height - 1 {
+            for i1 in i0 + 1..self.height {
+                self.check_lanes((0..self.width).map(|j| ((i0, j), (i1, j))))?;
+            }
+        }
+
+        // Each column pairs are different
         for j0 in 0..self.width - 1 {
-            // Columns are filled and different
-            (j0 + 1..self.width).try_for_each(|j1| self.check_lanes((0..self.height).map(|i| ((i, j0), (i, j1)))))?;
+            for j1 in j0 + 1..self.width {
+                self.check_lanes((0..self.height).map(|i| ((i, j0), (i, j1))))?;
+            }
         }
 
         Ok(())
@@ -116,7 +141,7 @@ impl Grid {
             match (&self[idx0], &self[idx1], &self[idx2]) {
                 (Some(Cell::Zero), Some(Cell::Zero), Some(Cell::Zero))
                 | (Some(Cell::One), Some(Cell::One), Some(Cell::One)) => {
-                    return Err(GridError::AdjacentCells);
+                    return Err(GridError::InvalidGrid);
                 }
                 _ => {}
             }
@@ -143,7 +168,7 @@ impl Grid {
         }
 
         if balance[&Cell::Zero] != balance[&Cell::One] {
-            return Err(GridError::LaneUnbalanced);
+            return Err(GridError::InvalidGrid);
         }
 
         Ok(())
@@ -160,7 +185,85 @@ impl Grid {
             }
         }
 
-        Err(GridError::SameLanes)
+        Err(GridError::InvalidGrid)
+    }
+
+    fn fill_constraints(&mut self) -> bool {
+        let mut changed = false;
+
+        for i in 0..self.height {
+            let mut window = [
+                None,
+                None,
+                None,
+                if 0 < self.width { self[(i, 0)] } else { None },
+                if 1 < self.width { self[(i, 1)] } else { None },
+            ];
+
+            for j in 0..self.width {
+                for i in 0..4 {
+                    window[i] = window[i + 1];
+                }
+                window[4] = if (j + 2) < self.width { self[(i, j + 2)] } else { None };
+
+                if self[(i, j)].is_none() {
+                    self[(i, j)] = Self::fill_cell(&window);
+
+                    if self[(i, j)].is_some() {
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        for j in 0..self.width {
+            let mut window = [
+                None,
+                None,
+                None,
+                if 0 < self.height { self[(0, j)] } else { None },
+                if 1 < self.height { self[(1, j)] } else { None },
+            ];
+
+            for i in 0..self.height {
+                for i in 0..4 {
+                    window[i] = window[i + 1];
+                }
+                window[4] = if (i + 2) < self.height { self[(i + 2, j)] } else { None };
+
+                if self[(i, j)].is_none() {
+                    self[(i, j)] = Self::fill_cell(&window);
+
+                    if self[(i, j)].is_some() {
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        !changed
+    }
+
+    fn fill_cell(window: &[Option<Cell>; 5]) -> Option<Cell> {
+        if let (Some(x), Some(y)) = (window[0], window[1]) {
+            if x == y {
+                return Some(!x);
+            }
+        }
+
+        if let (Some(x), Some(y)) = (window[3], window[4]) {
+            if x == y {
+                return Some(!x);
+            }
+        }
+
+        if let (Some(x), Some(y)) = (window[1], window[3]) {
+            if x == y {
+                return Some(!x);
+            }
+        }
+
+        window[2]
     }
 }
 
@@ -205,6 +308,12 @@ impl ops::Index<(usize, usize)> for Grid {
 
     fn index(&self, idx: (usize, usize)) -> &Self::Output {
         &self.cells[idx.0][idx.1]
+    }
+}
+
+impl ops::IndexMut<(usize, usize)> for Grid {
+    fn index_mut(&mut self, idx: (usize, usize)) -> &mut Option<Cell> {
+        &mut self.cells[idx.0][idx.1]
     }
 }
 

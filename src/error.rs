@@ -4,11 +4,10 @@ use std::io;
 
 #[derive(Debug)]
 pub enum GridError {
-    AdjacentCells,
-    SameLanes,
     EmptyGrid,
-    LaneUnbalanced,
     InvalidChar(char),
+    InvalidGrid,
+    OddDimension(usize, usize),
     WidthMismatch(usize, usize),
     IOError(io::Error),
 }
@@ -18,20 +17,17 @@ impl fmt::Display for GridError {
         write!(fmt, "error: ")?;
 
         match self {
-            Self::AdjacentCells => {
-                write!(fmt, "3 consecutive cells have the same value")
-            }
-            Self::SameLanes => {
-                write!(fmt, "2 columns or 2 lines have the same value")
-            }
             Self::EmptyGrid => {
-                write!(fmt, "parsed grid has no lines")
-            }
-            Self::LaneUnbalanced => {
-                write!(fmt, "a line has unbalanced number of 0s and 1s")
+                write!(fmt, "gris is empty")
             }
             Self::InvalidChar(c) => {
                 write!(fmt, "unknown character '{}'", c)
+            }
+            Self::InvalidGrid => {
+                write!(fmt, "grid is invalid")
+            }
+            Self::OddDimension(height, width) => {
+                write!(fmt, "grid has odd dimensions ({}, {})", height, width)
             }
             Self::WidthMismatch(prev, curr) => {
                 write!(fmt, "a line has width {}, but previous ones are {}", curr, prev)
