@@ -7,8 +7,8 @@ pub enum GridError {
     EmptyGrid,
     InvalidChar(char),
     InvalidGrid,
-    OddDimension(usize, usize),
-    WidthMismatch(usize, usize),
+    OddDimension,
+    WidthMismatch,
     IOError(io::Error),
 }
 
@@ -26,11 +26,11 @@ impl fmt::Display for GridError {
             Self::InvalidGrid => {
                 write!(fmt, "grid is invalid")
             }
-            Self::OddDimension(height, width) => {
-                write!(fmt, "grid has odd dimensions ({}, {})", height, width)
+            Self::OddDimension => {
+                write!(fmt, "grid has odd dimensions")
             }
-            Self::WidthMismatch(prev, curr) => {
-                write!(fmt, "a line has width {}, but previous ones are {}", curr, prev)
+            Self::WidthMismatch => {
+                write!(fmt, "not all lines of the grid have the same length")
             }
             Self::IOError(err) => err.fmt(fmt),
         }
