@@ -69,13 +69,13 @@ impl Grid {
 
         // Compute histograms
         for i in 0..grid.height {
-            let histogram = Self::fill_histogram((0..grid.width).map(|j| grid[(i, j)]));
-            grid.histogram_lines.push(histogram);
+            grid.histogram_lines
+                .push(Self::fill_histogram(grid.line(i)));
         }
 
         for j in 0..grid.width {
-            let histogram = Self::fill_histogram((0..grid.height).map(|i| grid[(i, j)]));
-            grid.histogram_columns.push(histogram);
+            grid.histogram_columns
+                .push(Self::fill_histogram(grid.column(j)));
         }
 
         // Compute empty cells
@@ -91,9 +91,17 @@ impl Grid {
     }
 
     pub fn solve(&mut self) -> Result<(), GridError> {
-        while self.fill_cells() {}
+        loop {
+            // Fill cells that are constraints
+            while self.fill_constraints() {}
 
-        // TODO
+            // Fill cell with heuristics
+            if !self.fill_heuristics() {
+                break;
+            }
+        }
+
+        // TODO: brute force
 
         self.is_valid()
     }
@@ -102,29 +110,31 @@ impl Grid {
         // Check lines
         for i in 0..self.height {
             // Check lane
-            Self::check_lane((0..self.width).map(|j| self[(i, j)]).collect())?;
+            let lane: Vec<_> = self.line(i).collect();
+            Self::check_lane(&lane)?;
 
             // Check pair of lanes
             for i_pair in i + 1..self.height {
-                Self::check_pair((0..self.width).map(|j| (self[(i, j)], self[(i_pair, j)])))?;
+                Self::check_pair(lane.iter().zip(self.line(i_pair)))?;
             }
         }
 
         // Check columns
         for j in 0..self.width {
             // Check lane
-            Self::check_lane((0..self.height).map(|i| self[(i, j)]).collect())?;
+            let lane: Vec<_> = self.column(j).collect();
+            Self::check_lane(&lane)?;
 
             // Check pair of lanes
             for j_pair in j + 1..self.width {
-                Self::check_pair((0..self.height).map(|i| (self[(i, j)], self[(i, j_pair)])))?;
+                Self::check_pair(lane.iter().zip(self.column(j_pair)))?;
             }
         }
 
         Ok(())
     }
 
-    fn fill_cells(&mut self) -> bool {
+    fn fill_constraints(&mut self) -> bool {
         let mut changed = false;
 
         // Process lines
@@ -188,33 +198,77 @@ impl Grid {
         changed
     }
 
-    fn set(&mut self, x: usize, y: usize, new: Cell) {
-        let old = self[(x, y)];
+    fn fill_heuristics(&mut self) -> bool {
+        let mut changed = false;
 
-        self.histogram_lines[x].entry(old).and_modify(|e| *e -= 1);
-        self.histogram_lines[x].entry(new).and_modify(|e| *e += 1);
+        // Process lines
+        for i in 0..self.height {
+            // Check if a value is close to be filled, and is unbalanced with the other
+            if let Some(cell) = Self::get_one_missing(&self.histogram_lines[i], self.width / 2) {
+                let lane = self.line(i);
 
-        self.histogram_columns[y].entry(old).and_modify(|e| *e -= 1);
-        self.histogram_columns[y].entry(new).and_modify(|e| *e += 1);
+                // Get positions where it cannot be set
+                for j in Self::try_one_missing(cell, lane) {
+                    self.set(i, j, !cell);
+                    changed |= true;
+                }
+            }
+        }
+
+        // Process columns
+        for j in 0..self.width {
+            // Check if a value is close to be filled, and is unbalanced with the other
+            if let Some(cell) = Self::get_one_missing(&self.histogram_columns[j], self.height / 2) {
+                let lane = self.column(j);
+
+                // Get positions where it cannot be set
+                for i in Self::try_one_missing(cell, lane) {
+                    self.set(i, j, !cell);
+                    changed |= true;
+                }
+            }
+        }
+
+        changed
+    }
+
+    fn set(&mut self, i: usize, j: usize, new: Cell) {
+        let old = self[(i, j)];
+
+        self.histogram_lines[i].entry(old).and_modify(|e| *e -= 1);
+        self.histogram_lines[i].entry(new).and_modify(|e| *e += 1);
+
+        self.histogram_columns[j].entry(old).and_modify(|e| *e -= 1);
+        self.histogram_columns[j].entry(new).and_modify(|e| *e += 1);
 
         if old.is_none() && new.is_some() {
             self.num_empty -= 1;
         }
 
-        self.cells[x][y] = new;
+        self.cells[i][j] = new;
     }
 
-    fn check_lane(line: Vec<Cell>) -> Result<(), GridError> {
-        let size = line.len();
+    fn line(&self, i: usize) -> impl Iterator<Item = Cell> + '_ {
+        (0..self.width).map(move |j| self[(i, j)])
+    }
+
+    fn column(&self, j: usize) -> impl Iterator<Item = Cell> + '_ {
+        (0..self.height).map(move |i| self[(i, j)])
+    }
+
+    fn check_lane(lane: &[Cell]) -> Result<(), GridError> {
+        let size = lane.len();
         let mut map = Histogram::from_iter(Cell::iter_some().map(|cell| (cell, 0)));
 
         for i in 0..size {
             // Check if no more than 2 adjacent identical values
-            if i + 2 < size && line[i].is_some() && line[i] == line[i + 1] && line[i] == line[i + 2] {
-                return Err(GridError::InvalidGrid);
+            if i + 2 < size && lane[i].is_some() {
+                (lane[i] == lane[i + 1] && lane[i] == lane[i + 2])
+                    .then(|| Err(GridError::InvalidGrid))
+                    .unwrap_or(Ok(()))?;
             }
 
-            *map.entry(line[i]).or_default() += 1;
+            *map.entry(lane[i]).or_default() += 1;
         }
 
         // Check if lane is balanced
@@ -225,15 +279,20 @@ impl Grid {
         Ok(())
     }
 
-    fn check_pair<I>(mut lanes: I) -> Result<(), GridError>
+    fn check_pair<I, S, T>(mut pairs: I) -> Result<(), GridError>
     where
-        I: Iterator<Item = (Cell, Cell)>,
+        I: Iterator<Item = (S, T)>,
+        S: AsRef<Cell>,
+        T: AsRef<Cell>,
     {
-        if lanes.any(|(cell0, cell1)| cell0.is_none() || cell0 != cell1) {
-            Ok(())
-        } else {
-            Err(GridError::InvalidGrid)
-        }
+        pairs
+            .any(|(lhs, rhs)| {
+                let lhs = lhs.as_ref();
+                let rhs = rhs.as_ref();
+                lhs.is_none() || lhs != rhs
+            })
+            .then(|| ())
+            .ok_or(GridError::InvalidGrid)
     }
 
     fn fill_cell(cell0: Cell, cell1: Cell) -> Cell {
@@ -250,17 +309,57 @@ impl Grid {
             .map_or(Default::default(), |cell| !cell)
     }
 
-    fn fill_histogram<I>(line: I) -> Histogram
+    fn fill_histogram<I>(lane: I) -> Histogram
     where
         I: Iterator<Item = Cell>,
     {
-        line.fold(
+        lane.fold(
             HashMap::from_iter(Cell::iter().map(|cell| (cell, 0))),
             |mut histogram, item| {
                 *histogram.entry(item).or_default() += 1;
                 histogram
             },
         )
+    }
+
+    fn get_one_missing(histogram: &Histogram, half: usize) -> Option<Cell> {
+        Cell::iter_some()
+            .find(|cell| histogram[cell] == half - 1 && histogram[cell] > histogram[!cell])
+    }
+
+    fn try_one_missing<I>(cell: Cell, lane: I) -> Vec<usize>
+    where
+        I: Iterator<Item = Cell>,
+    {
+        let mut result = Vec::new();
+        let mut none_idx = Vec::new();
+
+        // Replace empty cells by opposite value, but keep track of indice
+        let mut lane: Vec<_> = lane
+            .enumerate()
+            .map(|(idx, c)| match c {
+                Cell::None => {
+                    none_idx.push(idx);
+                    !cell
+                }
+                _ => c,
+            })
+            .collect();
+
+        // For each empty place
+        for i in none_idx {
+            // Try the tested value
+            lane[i] = cell;
+
+            if Self::check_lane(&lane).is_err() {
+                result.push(i);
+            }
+
+            // Restore opposite value
+            lane[i] = !cell;
+        }
+
+        result
     }
 }
 

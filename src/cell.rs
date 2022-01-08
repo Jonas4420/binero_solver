@@ -52,6 +52,12 @@ impl Default for Cell {
     }
 }
 
+impl AsRef<Cell> for Cell {
+    fn as_ref(&self) -> &Cell {
+        self
+    }
+}
+
 impl ops::Not for Cell {
     type Output = Self;
 
