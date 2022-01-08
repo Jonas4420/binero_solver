@@ -10,10 +10,11 @@ type Histogram = HashMap<Cell, usize>;
 #[derive(Debug)]
 pub struct Grid {
     cells: Vec<Vec<Cell>>,
-    histogram_lines: Vec<Histogram>,
-    histogram_columns: Vec<Histogram>,
     width: usize,
     height: usize,
+    histogram_lines: Vec<Histogram>,
+    histogram_columns: Vec<Histogram>,
+    num_empty: usize,
 }
 
 impl Grid {
@@ -24,11 +25,12 @@ impl Grid {
         GridError: From<E>,
     {
         let mut grid = Grid {
-            cells: Default::default(),
-            histogram_lines: Vec::new(),
-            histogram_columns: Vec::new(),
+            cells: Vec::new(),
             height: 0,
             width: 0,
+            histogram_lines: Vec::new(),
+            histogram_columns: Vec::new(),
+            num_empty: 0,
         };
 
         // Fill grid with parsed lines
@@ -67,24 +69,20 @@ impl Grid {
 
         // Compute histograms
         for i in 0..grid.height {
-            let mut histogram = HashMap::from_iter(Cell::iter().map(|cell| (cell, 0)));
-
-            for j in 0..grid.width {
-                *histogram.entry(grid[(i, j)]).or_insert(0) += 1;
-            }
-
+            let histogram = Self::fill_histogram((0..grid.width).map(|j| grid[(i, j)]));
             grid.histogram_lines.push(histogram);
         }
 
         for j in 0..grid.width {
-            let mut histogram = HashMap::from_iter(Cell::iter().map(|cell| (cell, 0)));
-
-            for i in 0..grid.height {
-                *histogram.entry(grid[(i, j)]).or_insert(0) += 1;
-            }
-
+            let histogram = Self::fill_histogram((0..grid.height).map(|i| grid[(i, j)]));
             grid.histogram_columns.push(histogram);
         }
+
+        // Compute empty cells
+        grid.num_empty = grid
+            .histogram_lines
+            .iter()
+            .fold(0, |acc, histogram| acc + histogram[&Cell::None]);
 
         // Check if the grid is valid
         grid.is_valid()?;
@@ -100,52 +98,26 @@ impl Grid {
         self.is_valid()
     }
 
-    fn is_filled(&self) -> bool {
-        for i in 0..self.height {
-            if (0..self.width).any(|j| self[(i, j)].is_none()) {
-                return false;
-            }
-        }
-
-        true
-    }
-
     fn is_valid(&self) -> Result<(), GridError> {
-        // No more than 2 consecutive values in a line
+        // Check lines
         for i in 0..self.height {
-            for j in 0..self.width - 2 {
-                Self::check_cells(self[(i, j)], self[(i, j + 1)], self[(i, j + 2)])?;
+            // Check lane
+            Self::check_lane((0..self.width).map(|j| self[(i, j)]).collect())?;
+
+            // Check pair of lanes
+            for i_pair in i + 1..self.height {
+                Self::check_pair((0..self.width).map(|j| (self[(i, j)], self[(i_pair, j)])))?;
             }
         }
 
-        // No more than 2 consecutive values in a column
+        // Check columns
         for j in 0..self.width {
-            for i in 0..self.height - 2 {
-                Self::check_cells(self[(i, j)], self[(i + 1, j)], self[(i + 2, j)])?;
-            }
-        }
+            // Check lane
+            Self::check_lane((0..self.height).map(|i| self[(i, j)]).collect())?;
 
-        // Check that full lines are balanced
-        for i in 0..self.height {
-            Self::check_balance(&self.histogram_lines[i])?;
-        }
-
-        // Check that full columns are balanced
-        for j in 0..self.width {
-            Self::check_balance(&self.histogram_columns[j])?;
-        }
-
-        // Each line pairs are different
-        for i0 in 0..self.height - 1 {
-            for i1 in i0 + 1..self.height {
-                Self::check_lanes((0..self.width).map(|j| (self[(i0, j)], self[(i1, j)])))?;
-            }
-        }
-
-        // Each column pairs are different
-        for j0 in 0..self.width - 1 {
-            for j1 in j0 + 1..self.width {
-                Self::check_lanes((0..self.height).map(|i| (self[(i, j0)], self[(i, j1)])))?;
+            // Check pair of lanes
+            for j_pair in j + 1..self.width {
+                Self::check_pair((0..self.height).map(|i| (self[(i, j)], self[(i, j_pair)])))?;
             }
         }
 
@@ -225,24 +197,35 @@ impl Grid {
         self.histogram_columns[y].entry(old).and_modify(|e| *e -= 1);
         self.histogram_columns[y].entry(new).and_modify(|e| *e += 1);
 
+        if old.is_none() && new.is_some() {
+            self.num_empty -= 1;
+        }
+
         self.cells[x][y] = new;
     }
 
-    fn check_cells(cell0: Cell, cell1: Cell, cell2: Cell) -> Result<(), GridError> {
-        if cell0.is_none() || cell0 != cell1 || cell0 != cell2 {
-            Ok(())
-        } else {
-            Err(GridError::InvalidGrid)
+    fn check_lane(line: Vec<Cell>) -> Result<(), GridError> {
+        let size = line.len();
+        let mut map = Histogram::from_iter(Cell::iter_some().map(|cell| (cell, 0)));
+
+        for i in 0..size {
+            // Check if no more than 2 adjacent identical values
+            if i + 2 < size && line[i].is_some() && line[i] == line[i + 1] && line[i] == line[i + 2] {
+                return Err(GridError::InvalidGrid);
+            }
+
+            *map.entry(line[i]).or_default() += 1;
         }
+
+        // Check if lane is balanced
+        if map[&Cell::Zero] > (size / 2) || map[&Cell::One] > (size / 2) {
+            return Err(GridError::InvalidGrid);
+        }
+
+        Ok(())
     }
 
-    fn check_balance(histogram: &Histogram) -> Result<(), GridError> {
-        Cell::iter_some()
-            .find(|cell| histogram[cell] > histogram[!cell] + histogram[&Cell::None])
-            .map_or(Ok(()), |_| Err(GridError::InvalidGrid))
-    }
-
-    fn check_lanes<I>(mut lanes: I) -> Result<(), GridError>
+    fn check_pair<I>(mut lanes: I) -> Result<(), GridError>
     where
         I: Iterator<Item = (Cell, Cell)>,
     {
@@ -265,6 +248,19 @@ impl Grid {
         Cell::iter_some()
             .find(|cell| histogram[cell] >= (histogram[!cell] + histogram[&Cell::None]))
             .map_or(Default::default(), |cell| !cell)
+    }
+
+    fn fill_histogram<I>(line: I) -> Histogram
+    where
+        I: Iterator<Item = Cell>,
+    {
+        line.fold(
+            HashMap::from_iter(Cell::iter().map(|cell| (cell, 0))),
+            |mut histogram, item| {
+                *histogram.entry(item).or_default() += 1;
+                histogram
+            },
+        )
     }
 }
 
