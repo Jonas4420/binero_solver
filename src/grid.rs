@@ -7,14 +7,15 @@ use crate::error::GridError;
 
 type Histogram = HashMap<Cell, usize>;
 
+// TODO: maybe use Option<Cell>?
+
 #[derive(Debug)]
 pub struct Grid {
     cells: Vec<Vec<Cell>>,
     width: usize,
     height: usize,
-    histogram_lines: Vec<Histogram>,
-    histogram_columns: Vec<Histogram>,
-    num_empty: usize,
+    missing_lines: Vec<Histogram>,
+    missing_columns: Vec<Histogram>,
 }
 
 impl Grid {
@@ -28,9 +29,8 @@ impl Grid {
             cells: Vec::new(),
             height: 0,
             width: 0,
-            histogram_lines: Vec::new(),
-            histogram_columns: Vec::new(),
-            num_empty: 0,
+            missing_lines: Vec::new(),
+            missing_columns: Vec::new(),
         };
 
         // Fill grid with parsed lines
@@ -67,22 +67,16 @@ impl Grid {
             return Err(GridError::OddDimension);
         }
 
-        // Compute histograms
+        // Compute number of missing cells
         for i in 0..grid.height {
-            grid.histogram_lines
-                .push(Self::fill_histogram(grid.line(i)));
+            grid.missing_lines
+                .push(Self::fill_missings(grid.width, grid.line(i)));
         }
 
         for j in 0..grid.width {
-            grid.histogram_columns
-                .push(Self::fill_histogram(grid.column(j)));
+            grid.missing_columns
+                .push(Self::fill_missings(grid.height, grid.column(j)));
         }
-
-        // Compute empty cells
-        grid.num_empty = grid
-            .histogram_lines
-            .iter()
-            .fold(0, |acc, histogram| acc + histogram[&Cell::None]);
 
         // Check if the grid is valid
         grid.is_valid()?;
@@ -144,7 +138,7 @@ impl Grid {
                     let new = self[(i, j)]
                         .or_else(|| {
                             // If a line is already saturated, fill it with the opposite value
-                            Self::fill_saturated(&self.histogram_lines[i])
+                            Self::fill_saturated(&self.missing_lines[i])
                         })
                         .or_else_if(j >= 2, || {
                             // Or check 2 previous cells
@@ -159,9 +153,7 @@ impl Grid {
                             Self::fill_cell(self[(i, j - 1)], self[(i, j + 1)])
                         });
 
-                    self.set(i, j, new);
-
-                    changed |= self[(i, j)].is_some();
+                    changed |= self.set(i, j, new);
                 }
             }
         }
@@ -173,7 +165,7 @@ impl Grid {
                     let new = self[(i, j)]
                         .or_else(|| {
                             // If a line is already saturated, fill it with the opposite value
-                            Self::fill_saturated(&self.histogram_columns[j])
+                            Self::fill_saturated(&self.missing_columns[j])
                         })
                         .or_else_if(i >= 2, || {
                             // Or check 2 previous cells
@@ -188,9 +180,7 @@ impl Grid {
                             Self::fill_cell(self[(i - 1, j)], self[(i + 1, j)])
                         });
 
-                    self.set(i, j, new);
-
-                    changed |= self[(i, j)].is_some();
+                    changed |= self.set(i, j, new);
                 }
             }
         }
@@ -203,28 +193,30 @@ impl Grid {
 
         // Process lines
         for i in 0..self.height {
-            // Check if a value is close to be filled, and is unbalanced with the other
-            if let Some(cell) = Self::get_one_missing(&self.histogram_lines[i], self.width / 2) {
-                let lane = self.line(i);
+            for missings in 1..=2 {
+                // Check if a value is close to be filled, and is unbalanced with the other
+                if let Some(cell) = Self::get_missings(&self.missing_lines[i], missings) {
+                    let lane = self.line(i);
 
-                // Get positions where it cannot be set
-                for j in Self::try_one_missing(cell, lane) {
-                    self.set(i, j, !cell);
-                    changed |= true;
+                    // Get positions where it cannot be set
+                    for j in Self::try_missings(cell, lane, missings) {
+                        changed |= self.set(i, j, !cell);
+                    }
                 }
             }
         }
 
         // Process columns
         for j in 0..self.width {
-            // Check if a value is close to be filled, and is unbalanced with the other
-            if let Some(cell) = Self::get_one_missing(&self.histogram_columns[j], self.height / 2) {
-                let lane = self.column(j);
+            for missings in 1..=2 {
+                // Check if a value is close to be filled, and is unbalanced with the other
+                if let Some(cell) = Self::get_missings(&self.missing_columns[j], missings) {
+                    let lane = self.column(j);
 
-                // Get positions where it cannot be set
-                for i in Self::try_one_missing(cell, lane) {
-                    self.set(i, j, !cell);
-                    changed |= true;
+                    // Get positions where it cannot be set
+                    for i in Self::try_missings(cell, lane, missings) {
+                        changed |= self.set(i, j, !cell);
+                    }
                 }
             }
         }
@@ -232,20 +224,22 @@ impl Grid {
         changed
     }
 
-    fn set(&mut self, i: usize, j: usize, new: Cell) {
+    fn set(&mut self, i: usize, j: usize, new: Cell) -> bool {
         let old = self[(i, j)];
 
-        self.histogram_lines[i].entry(old).and_modify(|e| *e -= 1);
-        self.histogram_lines[i].entry(new).and_modify(|e| *e += 1);
+        if old.is_some() {
+            self.missing_lines[i].entry(old).and_modify(|e| *e += 1);
+            self.missing_columns[j].entry(old).and_modify(|e| *e += 1);
+        }
 
-        self.histogram_columns[j].entry(old).and_modify(|e| *e -= 1);
-        self.histogram_columns[j].entry(new).and_modify(|e| *e += 1);
-
-        if old.is_none() && new.is_some() {
-            self.num_empty -= 1;
+        if new.is_some() {
+            self.missing_lines[i].entry(new).and_modify(|e| *e -= 1);
+            self.missing_columns[j].entry(new).and_modify(|e| *e -= 1);
         }
 
         self.cells[i][j] = new;
+
+        old != self.cells[i][j]
     }
 
     fn line(&self, i: usize) -> impl Iterator<Item = Cell> + '_ {
@@ -258,7 +252,7 @@ impl Grid {
 
     fn check_lane(lane: &[Cell]) -> Result<(), GridError> {
         let size = lane.len();
-        let mut map = Histogram::from_iter(Cell::iter_some().map(|cell| (cell, 0)));
+        let mut map = Histogram::from_iter(Cell::iter().map(|cell| (cell, 0)));
 
         for i in 0..size {
             // Check if no more than 2 adjacent identical values
@@ -295,39 +289,34 @@ impl Grid {
             .ok_or(GridError::InvalidGrid)
     }
 
-    fn fill_cell(cell0: Cell, cell1: Cell) -> Cell {
-        if cell0.is_some() && cell0 == cell1 {
-            !cell0
-        } else {
-            Cell::None
-        }
+    fn fill_cell(cell0: Cell, cell1: Cell) -> Option<Cell> {
+        (cell0.is_some() && cell0 == cell1).then(|| !cell0)
     }
 
-    fn fill_saturated(histogram: &Histogram) -> Cell {
-        Cell::iter_some()
-            .find(|cell| histogram[cell] >= (histogram[!cell] + histogram[&Cell::None]))
-            .map_or(Default::default(), |cell| !cell)
+    fn fill_saturated(missings: &Histogram) -> Option<Cell> {
+        Cell::iter().find(|cell| missings[cell] != 0 && missings[!cell] == 0)
     }
 
-    fn fill_histogram<I>(lane: I) -> Histogram
+    fn fill_missings<I>(size: usize, lane: I) -> Histogram
     where
         I: Iterator<Item = Cell>,
     {
         lane.fold(
-            HashMap::from_iter(Cell::iter().map(|cell| (cell, 0))),
-            |mut histogram, item| {
-                *histogram.entry(item).or_default() += 1;
-                histogram
+            [(Cell::Zero, size / 2), (Cell::One, size / 2)],
+            |acc, cell| match cell {
+                Cell::Zero => [(acc[0].0, acc[0].1 - 1), acc[1]],
+                Cell::One => [acc[0], (acc[1].0, acc[1].1 - 1)],
+                _ => acc,
             },
         )
+        .into()
     }
 
-    fn get_one_missing(histogram: &Histogram, half: usize) -> Option<Cell> {
-        Cell::iter_some()
-            .find(|cell| histogram[cell] == half - 1 && histogram[cell] > histogram[!cell])
+    fn get_missings(missings: &Histogram, offset: usize) -> Option<Cell> {
+        Cell::iter().find(|cell| missings[&cell] == offset && missings[&!cell] > missings[&cell])
     }
 
-    fn try_one_missing<I>(cell: Cell, lane: I) -> Vec<usize>
+    fn try_missings<I>(cell: Cell, lane: I, missings: usize) -> Vec<usize>
     where
         I: Iterator<Item = Cell>,
     {
@@ -347,11 +336,25 @@ impl Grid {
             .collect();
 
         // For each empty place
-        for i in none_idx {
+        for i in none_idx.iter().copied() {
             // Try the tested value
             lane[i] = cell;
 
-            if Self::check_lane(&lane).is_err() {
+            let is_possible = match missings {
+                // Check if that position is possible
+                1 => Self::check_lane(&lane).is_ok(),
+                // Check if that position and any other positions are possible
+                2 => none_idx.iter().copied().filter(|j| i != *j).any(|j| {
+                    lane[j] = cell;
+                    let is_valid = Self::check_lane(&lane).is_ok();
+                    lane[j] = !cell;
+                    is_valid
+                }),
+                // No heuristics after 2
+                _ => true,
+            };
+
+            if !is_possible {
                 result.push(i);
             }
 

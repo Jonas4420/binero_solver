@@ -13,19 +13,21 @@ pub enum Cell {
 impl Cell {
     pub fn or_else<F>(self, f: F) -> Self
     where
-        F: FnOnce() -> Self,
+        F: FnOnce() -> Option<Self>,
     {
         self.or_else_if(true, f)
     }
 
     pub fn or_else_if<F>(self, cond: bool, f: F) -> Self
     where
-        F: FnOnce() -> Self,
+        F: FnOnce() -> Option<Self>,
     {
         if self.is_some() || !cond {
             self
+        } else if let Some(cell) = f() {
+            cell
         } else {
-            f()
+            Cell::None
         }
     }
 
@@ -38,17 +40,7 @@ impl Cell {
     }
 
     pub fn iter() -> impl Iterator<Item = Cell> {
-        vec![Self::None, Self::Zero, Self::One].into_iter()
-    }
-
-    pub fn iter_some() -> impl Iterator<Item = Cell> {
         vec![Self::Zero, Self::One].into_iter()
-    }
-}
-
-impl Default for Cell {
-    fn default() -> Self {
-        Cell::None
     }
 }
 
