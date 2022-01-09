@@ -6,12 +6,11 @@ use crate::cell::*;
 use crate::error::GridError;
 
 type Histogram = HashMap<Cell, usize>;
-
-// TODO: maybe use Option<Cell>?
+type GridCell = Option<Cell>;
 
 #[derive(Debug)]
 pub struct Grid {
-    cells: Vec<Vec<Cell>>,
+    cells: Vec<Vec<GridCell>>,
     width: usize,
     height: usize,
     missing_lines: Vec<Histogram>,
@@ -39,7 +38,10 @@ impl Grid {
                 .as_ref()
                 .chars()
                 .filter(|c| !c.is_whitespace())
-                .map(Cell::try_from)
+                .map(|c| match c {
+                    '-' => Ok(None),
+                    _ => Cell::try_from(c).map(Some),
+                })
                 .collect::<Result<Vec<_>, _>>()?;
 
             if !vec.is_empty() {
@@ -109,7 +111,7 @@ impl Grid {
 
             // Check pair of lanes
             for i_pair in i + 1..self.height {
-                Self::check_pair(lane.iter().zip(self.line(i_pair)))?;
+                Self::check_pair(lane.iter().copied().zip(self.line(i_pair)))?;
             }
         }
 
@@ -121,7 +123,7 @@ impl Grid {
 
             // Check pair of lanes
             for j_pair in j + 1..self.width {
-                Self::check_pair(lane.iter().zip(self.column(j_pair)))?;
+                Self::check_pair(lane.iter().copied().zip(self.column(j_pair)))?;
             }
         }
 
@@ -135,22 +137,25 @@ impl Grid {
         for i in 0..self.height {
             for j in 0..self.width {
                 if self[(i, j)].is_none() {
-                    let new = self[(i, j)]
+                    // If a line is already saturated, fill it with the opposite value
+                    let new = Self::fill_saturated(&self.missing_lines[i])
                         .or_else(|| {
-                            // If a line is already saturated, fill it with the opposite value
-                            Self::fill_saturated(&self.missing_lines[i])
-                        })
-                        .or_else_if(j >= 2, || {
                             // Or check 2 previous cells
-                            Self::fill_cell(self[(i, j - 2)], self[(i, j - 1)])
+                            (j >= 2)
+                                .then(|| Self::fill_cell(self[(i, j - 2)], self[(i, j - 1)]))
+                                .flatten()
                         })
-                        .or_else_if(j + 2 < self.width, || {
+                        .or_else(|| {
                             // Or check 2 next cells
-                            Self::fill_cell(self[(i, j + 1)], self[(i, j + 2)])
+                            (j + 2 < self.width)
+                                .then(|| Self::fill_cell(self[(i, j + 1)], self[(i, j + 2)]))
+                                .flatten()
                         })
-                        .or_else_if(j >= 1 && j + 1 < self.width, || {
+                        .or_else(|| {
                             // Or check 2 surrounding cells
-                            Self::fill_cell(self[(i, j - 1)], self[(i, j + 1)])
+                            (j >= 1 && j + 1 < self.width)
+                                .then(|| Self::fill_cell(self[(i, j - 1)], self[(i, j + 1)]))
+                                .flatten()
                         });
 
                     changed |= self.set(i, j, new);
@@ -162,22 +167,25 @@ impl Grid {
         for j in 0..self.width {
             for i in 0..self.height {
                 if self[(i, j)].is_none() {
-                    let new = self[(i, j)]
+                    // If a line is already saturated, fill it with the opposite value
+                    let new = Self::fill_saturated(&self.missing_columns[j])
                         .or_else(|| {
-                            // If a line is already saturated, fill it with the opposite value
-                            Self::fill_saturated(&self.missing_columns[j])
-                        })
-                        .or_else_if(i >= 2, || {
                             // Or check 2 previous cells
-                            Self::fill_cell(self[(i - 2, j)], self[(i - 1, j)])
+                            (i >= 2)
+                                .then(|| Self::fill_cell(self[(i - 2, j)], self[(i - 1, j)]))
+                                .flatten()
                         })
-                        .or_else_if(i + 2 < self.height, || {
+                        .or_else(|| {
                             // Or check 2 next cells
-                            Self::fill_cell(self[(i + 1, j)], self[(i + 2, j)])
+                            (i + 2 < self.height)
+                                .then(|| Self::fill_cell(self[(i + 1, j)], self[(i + 2, j)]))
+                                .flatten()
                         })
-                        .or_else_if(i >= 1 && i + 1 < self.height, || {
+                        .or_else(|| {
                             // Or check 2 surrounding cells
-                            Self::fill_cell(self[(i - 1, j)], self[(i + 1, j)])
+                            (i >= 1 && i + 1 < self.height)
+                                .then(|| Self::fill_cell(self[(i - 1, j)], self[(i + 1, j)]))
+                                .flatten()
                         });
 
                     changed |= self.set(i, j, new);
@@ -200,7 +208,7 @@ impl Grid {
 
                     // Get positions where it cannot be set
                     for j in Self::try_missings(cell, lane, missings) {
-                        changed |= self.set(i, j, !cell);
+                        changed |= self.set(i, j, Some(!cell));
                     }
                 }
             }
@@ -215,7 +223,7 @@ impl Grid {
 
                     // Get positions where it cannot be set
                     for i in Self::try_missings(cell, lane, missings) {
-                        changed |= self.set(i, j, !cell);
+                        changed |= self.set(i, j, Some(!cell));
                     }
                 }
             }
@@ -224,15 +232,15 @@ impl Grid {
         changed
     }
 
-    fn set(&mut self, i: usize, j: usize, new: Cell) -> bool {
+    fn set(&mut self, i: usize, j: usize, new: GridCell) -> bool {
         let old = self[(i, j)];
 
-        if old.is_some() {
+        if let Some(old) = old {
             self.missing_lines[i].entry(old).and_modify(|e| *e += 1);
             self.missing_columns[j].entry(old).and_modify(|e| *e += 1);
         }
 
-        if new.is_some() {
+        if let Some(new) = new {
             self.missing_lines[i].entry(new).and_modify(|e| *e -= 1);
             self.missing_columns[j].entry(new).and_modify(|e| *e -= 1);
         }
@@ -242,83 +250,81 @@ impl Grid {
         old != self.cells[i][j]
     }
 
-    fn line(&self, i: usize) -> impl Iterator<Item = Cell> + '_ {
+    fn line(&self, i: usize) -> impl Iterator<Item = GridCell> + '_ {
         (0..self.width).map(move |j| self[(i, j)])
     }
 
-    fn column(&self, j: usize) -> impl Iterator<Item = Cell> + '_ {
+    fn column(&self, j: usize) -> impl Iterator<Item = GridCell> + '_ {
         (0..self.height).map(move |i| self[(i, j)])
     }
 
-    fn check_lane(lane: &[Cell]) -> Result<(), GridError> {
+    fn check_lane(lane: &[GridCell]) -> Result<(), GridError> {
         let size = lane.len();
         let mut map = Histogram::from_iter(Cell::iter().map(|cell| (cell, 0)));
 
         for i in 0..size {
             // Check if no more than 2 adjacent identical values
-            if i + 2 < size && lane[i].is_some() {
-                (lane[i] == lane[i + 1] && lane[i] == lane[i + 2])
-                    .then(|| Err(GridError::InvalidGrid))
-                    .unwrap_or(Ok(()))?;
-            }
+            if i + 2 < size {
+                if let Some(cell) = lane[i] {
+                    (lane[i] == lane[i + 1] && lane[i] == lane[i + 2])
+                        .then(|| Err(GridError::InvalidGrid))
+                        .unwrap_or(Ok(()))?;
 
-            *map.entry(lane[i]).or_default() += 1;
+                    *map.entry(cell).or_default() += 1;
+                }
+            }
         }
 
         // Check if lane is balanced
-        if map[&Cell::Zero] > (size / 2) || map[&Cell::One] > (size / 2) {
+        if Cell::iter().any(|cell| map[&cell] > (size / 2)) {
             return Err(GridError::InvalidGrid);
         }
 
         Ok(())
     }
 
-    fn check_pair<I, S, T>(mut pairs: I) -> Result<(), GridError>
+    fn check_pair<I>(mut pairs: I) -> Result<(), GridError>
     where
-        I: Iterator<Item = (S, T)>,
-        S: AsRef<Cell>,
-        T: AsRef<Cell>,
+        I: Iterator<Item = (GridCell, GridCell)>,
     {
         pairs
-            .any(|(lhs, rhs)| {
-                let lhs = lhs.as_ref();
-                let rhs = rhs.as_ref();
-                lhs.is_none() || lhs != rhs
-            })
+            .any(|(lhs, rhs)| lhs.is_none() || lhs != rhs)
             .then(|| ())
             .ok_or(GridError::InvalidGrid)
     }
 
-    fn fill_cell(cell0: Cell, cell1: Cell) -> Option<Cell> {
-        (cell0.is_some() && cell0 == cell1).then(|| !cell0)
+    fn fill_cell(cell0: GridCell, cell1: GridCell) -> GridCell {
+        cell0
+            .zip(cell1)
+            .and_then(|(value0, value1)| (value0 == value1).then(|| !value0))
     }
 
-    fn fill_saturated(missings: &Histogram) -> Option<Cell> {
+    fn fill_saturated(missings: &Histogram) -> GridCell {
         Cell::iter().find(|cell| missings[cell] != 0 && missings[!cell] == 0)
     }
 
     fn fill_missings<I>(size: usize, lane: I) -> Histogram
     where
-        I: Iterator<Item = Cell>,
+        I: Iterator<Item = GridCell>,
     {
         lane.fold(
-            [(Cell::Zero, size / 2), (Cell::One, size / 2)],
-            |acc, cell| match cell {
-                Cell::Zero => [(acc[0].0, acc[0].1 - 1), acc[1]],
-                Cell::One => [acc[0], (acc[1].0, acc[1].1 - 1)],
-                _ => acc,
+            Histogram::from_iter(Cell::iter().map(|cell| (cell, size / 2))),
+            |mut histogram, cell| {
+                if let Some(cell) = cell {
+                    histogram.entry(cell).and_modify(|e| *e -= 1);
+                }
+                histogram
             },
         )
-        .into()
     }
 
-    fn get_missings(missings: &Histogram, offset: usize) -> Option<Cell> {
-        Cell::iter().find(|cell| missings[&cell] == offset && missings[&!cell] > missings[&cell])
+    fn get_missings(missings: &Histogram, offset: usize) -> GridCell {
+        Cell::iter().find(|cell| missings[cell] == offset && missings[!cell] > missings[cell])
     }
 
     fn try_missings<I>(cell: Cell, lane: I, missings: usize) -> Vec<usize>
     where
-        I: Iterator<Item = Cell>,
+        I: Iterator<Item = GridCell>,
     {
         let mut result = Vec::new();
         let mut none_idx = Vec::new();
@@ -326,28 +332,27 @@ impl Grid {
         // Replace empty cells by opposite value, but keep track of indice
         let mut lane: Vec<_> = lane
             .enumerate()
-            .map(|(idx, c)| match c {
-                Cell::None => {
+            .map(|(idx, c)| {
+                c.or_else(|| {
                     none_idx.push(idx);
-                    !cell
-                }
-                _ => c,
+                    Some(!cell)
+                })
             })
             .collect();
 
         // For each empty place
         for i in none_idx.iter().copied() {
             // Try the tested value
-            lane[i] = cell;
+            lane[i] = Some(cell);
 
             let is_possible = match missings {
                 // Check if that position is possible
                 1 => Self::check_lane(&lane).is_ok(),
                 // Check if that position and any other positions are possible
                 2 => none_idx.iter().copied().filter(|j| i != *j).any(|j| {
-                    lane[j] = cell;
+                    lane[j] = Some(cell);
                     let is_valid = Self::check_lane(&lane).is_ok();
-                    lane[j] = !cell;
+                    lane[j] = Some(!cell);
                     is_valid
                 }),
                 // No heuristics after 2
@@ -359,7 +364,7 @@ impl Grid {
             }
 
             // Restore opposite value
-            lane[i] = !cell;
+            lane[i] = Some(!cell);
         }
 
         result
@@ -367,7 +372,7 @@ impl Grid {
 }
 
 impl ops::Index<(usize, usize)> for Grid {
-    type Output = Cell;
+    type Output = GridCell;
 
     fn index(&self, (x, y): (usize, usize)) -> &Self::Output {
         &self.cells[x][y]
@@ -378,7 +383,10 @@ impl fmt::Display for Grid {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         for i in 0..self.height {
             for j in 0..self.width {
-                write!(fmt, "{}", self[(i, j)])?;
+                match self[(i, j)] {
+                    Some(cell) => cell.fmt(fmt)?,
+                    None => write!(fmt, "-")?,
+                }
 
                 if j < self.width - 1 {
                     write!(fmt, " ")?;
