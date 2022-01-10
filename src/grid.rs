@@ -97,11 +97,11 @@ impl Grid {
             .unwrap_or(Ok(()))
     }
 
-    pub fn is_valid(&self) -> Result<(), GridError> {
+    fn is_valid(&self) -> Result<(), GridError> {
         for i in self.lines() {
             // Check lane
             let lane: Vec<_> = self.line(i).collect();
-            Self::check_lane(&lane)?;
+            Self::check_lane(lane.iter().copied())?;
 
             // Check pair of lanes
             for i_pair in i + 1..self.height {
@@ -112,7 +112,7 @@ impl Grid {
         for j in self.columns() {
             // Check lane
             let lane: Vec<_> = self.column(j).collect();
-            Self::check_lane(&lane)?;
+            Self::check_lane(lane.iter().copied())?;
 
             // Check pair of lanes
             for j_pair in j + 1..self.width {
@@ -258,42 +258,43 @@ impl Grid {
         0..self.width
     }
 
-    fn line(&self, i: usize) -> impl Iterator<Item = GridCell> + '_ {
-        self.columns().map(move |j| self[(i, j)])
+    fn line(&self, i: usize) -> impl Iterator<Item = &GridCell> {
+        self.columns().map(move |j| &self[(i, j)])
     }
 
-    fn column(&self, j: usize) -> impl Iterator<Item = GridCell> + '_ {
-        self.lines().map(move |i| self[(i, j)])
+    fn column(&self, j: usize) -> impl Iterator<Item = &GridCell> {
+        self.lines().map(move |i| &self[(i, j)])
     }
 
-    fn check_lane(lane: &[GridCell]) -> Result<(), GridError> {
-        let size = lane.len();
-        let mut map = Histogram::from_iter(Cell::iter().map(|cell| (cell, 0)));
-
-        for i in 0..size {
-            // Check if no more than 2 adjacent identical values
-            if i + 2 < size {
-                if let Some(cell) = lane[i] {
-                    (lane[i] == lane[i + 1] && lane[i] == lane[i + 2])
-                        .then(|| Err(GridError::InvalidGrid))
-                        .unwrap_or(Ok(()))?;
-
-                    *map.entry(cell).or_default() += 1;
-                }
-            }
-        }
-
-        // Check if lane is balanced
-        if Cell::iter().any(|cell| map[&cell] > (size / 2)) {
-            return Err(GridError::InvalidGrid);
-        }
-
-        Ok(())
-    }
-
-    fn check_pair<I>(mut pairs: I) -> Result<(), GridError>
+    fn check_lane<'a, I>(lane: I) -> Result<(), GridError>
     where
-        I: Iterator<Item = (GridCell, GridCell)>,
+        I: Iterator<Item = &'a GridCell> + Clone,
+    {
+        // Check if no more than 2 adjacent identical values
+        lane.clone().try_fold(
+            (None, None) as (Option<&GridCell>, Option<&GridCell>),
+            |acc, cell| {
+                if let (Some(x), Some(y)) = acc {
+                    if x.is_some() && x == y && y == cell {
+                        return Err(GridError::InvalidGrid);
+                    }
+                }
+
+                Ok((acc.1, Some(cell)))
+            },
+        )?;
+
+        // Check if both numbers are balanced
+        Self::find_count(lane, |map, size, cell| {
+            (map[&cell] > (size / 2)).then(|| cell)
+        })
+        .map(|_| Err(GridError::InvalidGrid))
+        .unwrap_or(Ok(()))
+    }
+
+    fn check_pair<'a, 'b, I>(mut pairs: I) -> Result<(), GridError>
+    where
+        I: Iterator<Item = (&'a GridCell, &'b GridCell)>,
     {
         pairs
             .any(|(lhs, rhs)| lhs.is_none() || lhs != rhs)
@@ -307,33 +308,24 @@ impl Grid {
             .and_then(|(value0, value1)| (value0 == value1).then(|| !value0))
     }
 
-    fn fill_saturated<I>(lane: I) -> GridCell
+    fn fill_saturated<'a, I>(lane: I) -> GridCell
     where
-        I: Iterator<Item = GridCell>,
+        I: Iterator<Item = &'a GridCell>,
     {
         Self::find_count(lane, |map, size, cell| {
             (map[&cell] >= size / 2).then(|| !cell)
         })
     }
 
-    fn get_missings<I>(lane: I, offset: usize) -> GridCell
+    fn find_count<'a, I, F>(lane: I, f: F) -> GridCell
     where
-        I: Iterator<Item = GridCell>,
-    {
-        Self::find_count(lane, |map, size, cell| {
-            (map[&cell] > map[&!cell] && map[&cell] + offset == (size / 2)).then(|| cell)
-        })
-    }
-
-    fn find_count<I, F>(lane: I, f: F) -> GridCell
-    where
-        I: Iterator<Item = GridCell>,
+        I: Iterator<Item = &'a GridCell>,
         F: Fn(&Histogram, usize, Cell) -> GridCell,
     {
         let mut map = Histogram::from_iter(Cell::iter().map(|cell| (cell, 0)));
         let size = lane.fold(0, |size, cell| {
             if let Some(cell) = cell {
-                *map.entry(cell).or_default() += 1;
+                *map.entry(*cell).or_default() += 1;
             }
 
             size + 1
@@ -342,18 +334,22 @@ impl Grid {
         Cell::iter().find_map(|cell| f(&map, size, cell))
     }
 
-    fn try_missings<I>(lane: I) -> HashMap<usize, GridCell>
+    fn try_missings<'a, I>(lane: I) -> HashMap<usize, GridCell>
     where
-        I: Iterator<Item = GridCell>,
+        I: Iterator<Item = &'a GridCell>,
     {
         let mut result = HashMap::new();
-        let lane: Vec<GridCell> = lane.collect();
+        let lane: Vec<&GridCell> = lane.collect();
 
-        for missings in 1..3 {
+        for num_guess in 1..3 {
             let mut none_idx = Vec::new();
 
-            // TODO
-            if let Some(cell) = Self::get_missings(lane.iter().copied(), missings) {
+            // Get value that is almost complete
+            let almost = Self::find_count(lane.iter().copied(), |map, size, cell| {
+                (map[&cell] > map[&!cell] && map[&cell] + num_guess == (size / 2)).then(|| cell)
+            });
+
+            if let Some(cell) = almost {
                 // Replace empty cells by opposite value, but keep track of indice
                 let mut lane: Vec<_> = lane
                     .iter()
@@ -371,12 +367,12 @@ impl Grid {
                     // Try the tested value
                     lane[i] = Some(cell);
 
-                    let is_possible = if missings == 1 {
-                        Self::check_lane(&lane).is_ok()
+                    let is_possible = if num_guess == 1 {
+                        Self::check_lane(lane.iter()).is_ok()
                     } else {
                         none_idx.iter().copied().filter(|j| i != *j).any(|j| {
                             lane[j] = Some(cell);
-                            let is_possible = Self::check_lane(&lane).is_ok();
+                            let is_possible = Self::check_lane(lane.iter()).is_ok();
                             lane[j] = Some(!cell);
                             is_possible
                         })
