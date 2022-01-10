@@ -9,7 +9,7 @@ use crate::index::*;
 type Histogram = HashMap<Cell, usize>;
 type GridCell = Option<Cell>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Grid {
     cells: Vec<Vec<GridCell>>,
     width: usize,
@@ -17,11 +17,10 @@ pub struct Grid {
 }
 
 impl Grid {
-    pub fn parse<I, S, E>(lines: I) -> Result<Grid, GridError>
+    pub fn parse<I, S>(lines: I) -> Result<Grid, GridError>
     where
-        I: Iterator<Item = Result<S, E>>,
+        I: Iterator<Item = S>,
         S: AsRef<str>,
-        GridError: From<E>,
     {
         let mut grid = Grid {
             cells: Vec::new(),
@@ -31,7 +30,7 @@ impl Grid {
 
         // Fill grid with parsed lines
         for line in lines {
-            let vec = line?
+            let vec = line
                 .as_ref()
                 .chars()
                 .take_while(|c| *c != '#')
@@ -424,5 +423,96 @@ impl fmt::Display for Grid {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn easy_grid() {
+        let input = vec![
+            "- 1 1 - 1 - - - - - - - 1 -\n",
+            "- - - - - - 1 - - - - 0 - -\n",
+            "1 - - - 0 0 - 0 0 - 1 - - -\n",
+            "- 0 0 - - - - - - - - - - 1\n",
+            "- 0 - - - 0 - - 0 - - - - -\n",
+            "- - - - - 0 - - - - 1 1 - -\n",
+            "0 - - - - - - - - - 1 - - -\n",
+            "- 0 - - 1 - 0 - 0 - - 0 - -\n",
+            "1 - - - - - - - 0 - - - 1 -\n",
+            "- - 1 1 - - - - - 1 - - - -\n",
+            "- 0 - - - - - - - - - - - 1\n",
+            "1 - - 0 - 1 - - 0 - - - - 1\n",
+            "- - - - - - 0 - 0 0 - - - -\n",
+            "- - - - - 1 - - - - - 1 - -\n",
+        ];
+
+        let solution = vec![
+            "0 1 1 0 1 1 0 0 1 0 0 1 1 0\n",
+            "0 0 1 0 1 0 1 1 0 1 1 0 0 1\n",
+            "1 1 0 1 0 0 1 0 0 1 1 0 1 0\n",
+            "1 0 0 1 0 1 0 1 1 0 0 1 0 1\n",
+            "0 0 1 0 1 0 1 1 0 1 0 0 1 1\n",
+            "1 1 0 1 0 0 1 0 1 0 1 1 0 0\n",
+            "0 1 0 1 0 1 0 0 1 0 1 1 0 1\n",
+            "0 0 1 0 1 1 0 1 0 1 0 0 1 1\n",
+            "1 1 0 0 1 0 1 1 0 0 1 0 1 0\n",
+            "1 0 1 1 0 1 0 0 1 1 0 1 0 0\n",
+            "0 0 1 1 0 0 1 0 1 1 0 0 1 1\n",
+            "1 1 0 0 1 1 0 1 0 0 1 0 0 1\n",
+            "1 1 0 1 1 0 0 1 0 0 1 1 0 0\n",
+            "0 0 1 0 0 1 1 0 1 1 0 1 1 0\n",
+        ];
+
+        let mut grid = Grid::parse(input.into_iter()).unwrap();
+        grid.solve().unwrap();
+
+        let solution = Grid::parse(solution.into_iter()).unwrap();
+        assert_eq!(grid, solution);
+    }
+
+    #[test]
+    fn hard_grid() {
+        let input = vec![
+            "- - 1 - - - 1 - 1 1 - - - -\n",
+            "0 0 - - 0 0 - 1 - - - - - -\n",
+            "- - - - - - - - - - - 1 - -\n",
+            "- - - - - - - - - 0 - - - -\n",
+            "- 1 - - 0 - - - - - - - - -\n",
+            "- - - - - - - - - 1 - - - 1\n",
+            "- 0 - - - 0 - 1 - - 0 - - -\n",
+            "- - 1 - - - - - - - 0 - - -\n",
+            "- - - - - - - 0 - - - - 0 0\n",
+            "- - 1 - - - - - - - - - 0 0\n",
+            "- - - - - - 1 - - - 1 - - -\n",
+            "- - - - - - 1 - 0 - - - - 0\n",
+            "0 - - 1 1 - - - - - - - 1 -\n",
+            "0 - - 1 - - - - - - 0 - - -\n",
+        ];
+
+        let solution = vec![
+            "0 1 1 0 0 1 1 0 1 1 0 0 1 0\n",
+            "0 0 1 1 0 0 1 1 0 1 1 0 0 1\n",
+            "1 0 0 1 1 0 0 1 0 0 1 1 0 1\n",
+            "1 1 0 0 1 1 0 0 1 0 0 1 1 0\n",
+            "0 1 1 0 0 1 1 0 0 1 1 0 0 1\n",
+            "1 0 0 1 1 0 0 1 0 1 1 0 0 1\n",
+            "1 0 0 1 1 0 0 1 1 0 0 1 1 0\n",
+            "0 1 1 0 0 1 1 0 0 1 0 0 1 1\n",
+            "1 1 0 0 1 0 1 0 1 0 1 1 0 0\n",
+            "1 0 1 1 0 1 0 1 1 0 0 1 0 0\n",
+            "0 0 1 0 0 1 1 0 0 1 1 0 1 1\n",
+            "1 1 0 0 1 0 1 1 0 0 1 1 0 0\n",
+            "0 1 0 1 1 0 0 1 1 0 0 1 1 0\n",
+            "0 0 1 1 0 1 0 0 1 1 0 0 1 1\n",
+        ];
+
+        let mut grid = Grid::parse(input.into_iter()).unwrap();
+        grid.solve().unwrap();
+
+        let solution = Grid::parse(solution.into_iter()).unwrap();
+        assert_eq!(grid, solution);
     }
 }

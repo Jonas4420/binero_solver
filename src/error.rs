@@ -1,6 +1,5 @@
 use std::error;
 use std::fmt;
-use std::io;
 
 #[derive(Debug)]
 pub enum GridError {
@@ -10,7 +9,6 @@ pub enum GridError {
     NoSolution,
     OddDimension,
     WidthMismatch,
-    IOError(io::Error),
 }
 
 impl fmt::Display for GridError {
@@ -36,15 +34,8 @@ impl fmt::Display for GridError {
             Self::WidthMismatch => {
                 write!(fmt, "not all lines of the grid have the same length")
             }
-            Self::IOError(err) => err.fmt(fmt),
         }
     }
 }
 
 impl error::Error for GridError {}
-
-impl From<io::Error> for GridError {
-    fn from(err: io::Error) -> Self {
-        Self::IOError(err)
-    }
-}

@@ -23,9 +23,11 @@ fn try_main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let file = fs::File::open(&args[1]).map_err(|err| format!("{}: {}", args[1], err))?;
-    let reader = io::BufReader::new(file);
+    let lines = io::BufReader::new(file)
+        .lines()
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let mut grid = grid::Grid::parse(reader.lines())?;
+    let mut grid = grid::Grid::parse(lines.into_iter())?;
 
     println!("Input grid:");
     println!("{}", grid);
