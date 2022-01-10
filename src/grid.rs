@@ -37,6 +37,7 @@ impl Grid {
             let vec = line?
                 .as_ref()
                 .chars()
+                .take_while(|c| *c != '#')
                 .filter(|c| !c.is_whitespace())
                 .map(|c| match c {
                     '-' => Ok(None),
@@ -87,6 +88,7 @@ impl Grid {
     }
 
     pub fn solve(&mut self) -> Result<(), GridError> {
+        // Fill grid with constraints so it remains valid
         loop {
             // Fill cells that are constraints
             while self.fill_constraints() {}
@@ -97,9 +99,19 @@ impl Grid {
             }
         }
 
-        // TODO: brute force
+        // Check if the grid is still valid
+        self.is_valid()?;
 
-        self.is_valid()
+        // Bruteforce remaining positions
+        self.fill_bruteforce()?;
+
+        Ok(())
+    }
+
+    fn is_solved(&self) -> bool {
+        self.missing_lines
+            .iter()
+            .all(|missings| Cell::iter().all(|cell| missings[&cell] == 0))
     }
 
     fn is_valid(&self) -> Result<(), GridError> {
@@ -204,10 +216,7 @@ impl Grid {
             for missings in 1..=2 {
                 // Check if a value is close to be filled, and is unbalanced with the other
                 if let Some(cell) = Self::get_missings(&self.missing_lines[i], missings) {
-                    let lane = self.line(i);
-
-                    // Get positions where it cannot be set
-                    for j in Self::try_missings(cell, lane, missings) {
+                    for j in Self::try_missings(cell, self.line(i), missings) {
                         changed |= self.set(i, j, Some(!cell));
                     }
                 }
@@ -219,10 +228,7 @@ impl Grid {
             for missings in 1..=2 {
                 // Check if a value is close to be filled, and is unbalanced with the other
                 if let Some(cell) = Self::get_missings(&self.missing_columns[j], missings) {
-                    let lane = self.column(j);
-
-                    // Get positions where it cannot be set
-                    for i in Self::try_missings(cell, lane, missings) {
+                    for i in Self::try_missings(cell, self.column(j), missings) {
                         changed |= self.set(i, j, Some(!cell));
                     }
                 }
@@ -230,6 +236,14 @@ impl Grid {
         }
 
         changed
+    }
+
+    fn fill_bruteforce(&mut self) -> Result<(), GridError> {
+        if self.is_solved() {
+            return Ok(());
+        }
+
+        Ok(())
     }
 
     fn set(&mut self, i: usize, j: usize, new: GridCell) -> bool {
@@ -346,20 +360,12 @@ impl Grid {
             lane[i] = Some(cell);
 
             let is_possible = match missings {
-                // Check if that position is possible
-                1 => Self::check_lane(&lane).is_ok(),
-                // Check if that position and any other positions are possible
-                2 => none_idx.iter().copied().filter(|j| i != *j).any(|j| {
-                    lane[j] = Some(cell);
-                    let is_valid = Self::check_lane(&lane).is_ok();
-                    lane[j] = Some(!cell);
-                    is_valid
-                }),
-                // No heuristics after 2
-                _ => true,
+                1 => Self::try_missings_one,
+                2 => Self::try_missings_two,
+                _ => Self::try_missings_none,
             };
 
-            if !is_possible {
+            if !is_possible(&mut lane, cell, &none_idx, i) {
                 result.push(i);
             }
 
@@ -368,6 +374,23 @@ impl Grid {
         }
 
         result
+    }
+
+    fn try_missings_none(_: &mut [GridCell], _: Cell, _: &[usize], _: usize) -> bool {
+        true
+    }
+
+    fn try_missings_one(lane: &mut [GridCell], _: Cell, _: &[usize], _: usize) -> bool {
+        Self::check_lane(lane).is_ok()
+    }
+
+    fn try_missings_two(lane: &mut [GridCell], cell: Cell, none_idx: &[usize], i: usize) -> bool {
+        none_idx.iter().copied().filter(|j| i != *j).any(|j| {
+            lane[j] = Some(cell);
+            let is_valid = Self::check_lane(lane).is_ok();
+            lane[j] = Some(!cell);
+            is_valid
+        })
     }
 }
 
