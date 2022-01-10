@@ -7,6 +7,7 @@ pub enum GridError {
     EmptyGrid,
     InvalidChar(char),
     InvalidGrid,
+    NoSolution,
     OddDimension,
     WidthMismatch,
     IOError(io::Error),
@@ -25,6 +26,9 @@ impl fmt::Display for GridError {
             }
             Self::InvalidGrid => {
                 write!(fmt, "grid is invalid")
+            }
+            Self::NoSolution => {
+                write!(fmt, "grid has no solution")
             }
             Self::OddDimension => {
                 write!(fmt, "grid has odd dimensions")

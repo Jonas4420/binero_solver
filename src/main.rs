@@ -6,6 +6,7 @@ use std::io::BufRead;
 mod cell;
 mod error;
 mod grid;
+mod index;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: refactor this code
